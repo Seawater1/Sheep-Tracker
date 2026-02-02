@@ -1,0 +1,49 @@
+{
+	"name": "WisBlock-API-V2",
+	"version": "2.0.27",
+	"keywords": [
+		"lora",
+		"Semtech",
+		"SX126x",
+		"RAK4630",
+		"RAK11200",
+		"WisBlock",
+		"RAK11300",
+		"RAK3112"
+	],
+	"description": "An RUI3 AT command compatible library that covers the complete LoRa/LoRaWAN, BLE and AT command handling. Just write your application specific functions and leave the rest to the API",
+	"frameworks": [
+		"arduino"
+	],
+	"platforms": [
+		"nordicnrf52",
+		"espressif32",
+		"rp2040"
+	],
+	"license": "MIT",
+	"authors": [
+		{
+			"email": "bernd.giesecke@rakwireless.com",
+			"url": "https://www.rakwireless.com",
+			"maintainer": true,
+			"name": "Bernd Giesecke"
+		}
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/beegee-tokyo/WisBlock-API-V2"
+	},
+	"dependencies": [
+		{
+			"owner": "beegee-tokyo",
+			"name": "SX126x-Arduino",
+			"version": "*"
+		},
+		{
+			"owner": "electroniccats",
+			"name": "CayenneLPP",
+			"version": "*"
+		}
+	],
+	"homepage": "https://github.com/beegee-tokyo/WisBlock-API-V2"
+}

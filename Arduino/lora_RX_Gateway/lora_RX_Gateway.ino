@@ -1,0 +1,271 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <SPI.h>
+#include <LoRaWan-Arduino.h>
+#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
+
+// ===== Hardware =====
+// RAK19007 (base), RAK11310 (core), RAK12500 (GNSS)
+// Adjust analog pins if your base board wiring differs
+#define PIN_VBAT WB_A0
+#define PIN_SOLAR WB_A1
+
+// Battery/solar divider calibration (adjust to your hardware)
+#define VBAT_MV_PER_LSB 0.806F
+#define VBAT_DIVIDER_COMP 1.846F
+#define REAL_VBAT_MV_PER_LSB (VBAT_DIVIDER_COMP * VBAT_MV_PER_LSB)
+
+#define VSOLAR_MV_PER_LSB 0.806F
+#define VSOLAR_DIVIDER_COMP 1.846F
+#define REAL_VSOLAR_MV_PER_LSB (VSOLAR_DIVIDER_COMP * VSOLAR_MV_PER_LSB)
+
+// ===== LoRaWAN =====
+#define LORAWAN_REGION LORAMAC_REGION_EU868
+#define LORAWAN_APP_PORT 1
+#define LORAWAN_RX_PORT 2
+#define JOINREQ_NBTRIALS 3
+
+// Default send interval: once a day
+static uint32_t g_send_interval_sec = 24UL * 60UL * 60UL;
+
+// OTAA keys (fill with your TTN values)
+static uint8_t nodeDeviceEUI[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static uint8_t nodeAppEUI[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static uint8_t nodeAppKey[16] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+static uint8_t m_lora_app_data_buffer[64];
+static lmh_app_data_t m_lora_app_data = {m_lora_app_data_buffer, 0, 0, 0, 0};
+static bool g_joined = false;
+
+static lmh_param_t lora_param_init = {
+    LORAWAN_ADR_ON,
+    DR_3,
+    LORAWAN_PUBLIC_NETWORK,
+    JOINREQ_NBTRIALS,
+    LORAWAN_DEFAULT_TX_POWER,
+    LORAWAN_DUTYCYCLE_OFF,
+};
+
+static void lorawan_has_joined_handler(void);
+static void lorawan_rx_handler(lmh_app_data_t *app_data);
+static void lorawan_confirm_class_handler(DeviceClass_t Class);
+static void lorawan_join_failed_handler(void);
+static void lorawan_unconf_finished(void);
+static void lorawan_conf_finished(bool result);
+
+static lmh_callback_t lora_callbacks = {
+    BoardGetBatteryLevel,
+    BoardGetUniqueId,
+    BoardGetRandomSeed,
+    lorawan_rx_handler,
+    lorawan_has_joined_handler,
+    lorawan_confirm_class_handler,
+    lorawan_join_failed_handler,
+    lorawan_unconf_finished,
+    lorawan_conf_finished};
+
+static TimerEvent_t appTimer;
+
+// ===== GNSS =====
+SFE_UBLOX_GNSS g_gnss;
+
+static uint16_t read_mv(uint8_t pin, float mv_per_lsb)
+{
+    unsigned int sum = 0;
+    unsigned int adc_max = 0;
+    unsigned int adc_min = 4095;
+
+    for (uint8_t i = 0; i < 10; i++)
+    {
+        unsigned int v = analogRead(pin);
+        if (v < adc_min) adc_min = v;
+        if (v > adc_max) adc_max = v;
+        sum += v;
+        delay(2);
+    }
+
+    unsigned int avg = (sum - adc_max - adc_min) >> 3;
+    return (uint16_t)(avg * mv_per_lsb);
+}
+
+struct __attribute__((packed)) payload_t
+{
+    uint16_t batt_mv;
+    uint16_t solar_mv;
+    int32_t lat_e7;
+    int32_t lon_e7;
+    int16_t alt_m;
+    uint32_t gps_unix;
+};
+
+static void build_payload(payload_t &p)
+{
+    p.batt_mv = read_mv(PIN_VBAT, REAL_VBAT_MV_PER_LSB);
+    p.solar_mv = read_mv(PIN_SOLAR, REAL_VSOLAR_MV_PER_LSB);
+
+    bool got_pvt = g_gnss.getPVT();
+    uint8_t siv = g_gnss.getSIV();
+
+    if (!got_pvt || siv < 4)
+    {
+        p.lat_e7 = 0;
+        p.lon_e7 = 0;
+        p.alt_m = 0;
+        p.gps_unix = 0;
+        return;
+    }
+
+    p.lat_e7 = g_gnss.getLatitude();
+    p.lon_e7 = g_gnss.getLongitude();
+    p.alt_m = (int16_t)(g_gnss.getAltitude() / 1000);
+    p.gps_unix = g_gnss.getUnixEpoch();
+}
+
+static void send_lora_frame(void)
+{
+    if (!g_joined)
+    {
+        Serial.println("Not joined yet, skip send");
+        return;
+    }
+
+    payload_t payload;
+    build_payload(payload);
+
+    memcpy(m_lora_app_data.buffer, &payload, sizeof(payload));
+    m_lora_app_data.port = LORAWAN_APP_PORT;
+    m_lora_app_data.buffsize = sizeof(payload);
+
+    lmh_error_status err = lmh_send(&m_lora_app_data, LMH_UNCONFIRMED_MSG);
+    Serial.printf("lmh_send=%d, batt=%u, solar=%u\n", err, payload.batt_mv, payload.solar_mv);
+}
+
+static void tx_lora_periodic_handler(void)
+{
+    TimerSetValue(&appTimer, g_send_interval_sec * 1000UL);
+    TimerStart(&appTimer);
+    send_lora_frame();
+}
+
+static void lorawan_has_joined_handler(void)
+{
+    Serial.println("Joined LoRaWAN");
+    g_joined = true;
+
+    lmh_class_request(CLASS_A);
+
+    TimerSetValue(&appTimer, g_send_interval_sec * 1000UL);
+    TimerStart(&appTimer);
+}
+
+static void lorawan_join_failed_handler(void)
+{
+    Serial.println("Join failed: check DevEUI/AppEUI/AppKey and gateway");
+}
+
+static void lorawan_confirm_class_handler(DeviceClass_t Class)
+{
+    Serial.printf("Switch to Class %c done\n", "ABC"[Class]);
+}
+
+static void lorawan_unconf_finished(void)
+{
+    Serial.println("Uplink sent (unconfirmed)");
+}
+
+static void lorawan_conf_finished(bool result)
+{
+    Serial.printf("Uplink confirmed: %s\n", result ? "true" : "false");
+}
+
+static void lorawan_rx_handler(lmh_app_data_t *app_data)
+{
+    Serial.printf("RX port=%u len=%u\n", app_data->port, app_data->buffsize);
+
+    if (app_data->port != LORAWAN_RX_PORT)
+    {
+        return;
+    }
+
+    // Downlink format (little-endian):
+    // - 2 bytes: sleep minutes (uint16)
+    // - or 4 bytes: sleep seconds (uint32)
+    if (app_data->buffsize == 2)
+    {
+        uint16_t minutes = (uint16_t)app_data->buffer[0] | ((uint16_t)app_data->buffer[1] << 8);
+        if (minutes > 0)
+        {
+            g_send_interval_sec = (uint32_t)minutes * 60UL;
+            Serial.printf("Set interval to %u minutes\n", minutes);
+            TimerSetValue(&appTimer, g_send_interval_sec * 1000UL);
+            TimerStart(&appTimer);
+        }
+    }
+    else if (app_data->buffsize == 4)
+    {
+        uint32_t seconds = (uint32_t)app_data->buffer[0] |
+                           ((uint32_t)app_data->buffer[1] << 8) |
+                           ((uint32_t)app_data->buffer[2] << 16) |
+                           ((uint32_t)app_data->buffer[3] << 24);
+        if (seconds > 0)
+        {
+            g_send_interval_sec = seconds;
+            Serial.printf("Set interval to %u seconds\n", seconds);
+            TimerSetValue(&appTimer, g_send_interval_sec * 1000UL);
+            TimerStart(&appTimer);
+        }
+    }
+}
+
+void setup()
+{
+    Serial.begin(115200);
+    delay(2000);
+
+    analogReadResolution(12);
+
+    Wire.begin();
+    if (g_gnss.begin())
+    {
+        g_gnss.setI2COutput(COM_TYPE_UBX);
+        g_gnss.setAutoPVT(true);
+        Serial.println("GNSS OK");
+    }
+    else
+    {
+        Serial.println("GNSS not found (will still send voltages)");
+    }
+
+    if (lora_rak11300_init() != 0)
+    {
+        Serial.println("LoRa init failed");
+        return;
+    }
+
+    // Setup keys
+    lmh_setDevEui(nodeDeviceEUI);
+    lmh_setAppEui(nodeAppEUI);
+    lmh_setAppKey(nodeAppKey);
+
+    // Init LoRaWAN
+    uint32_t err = lmh_init(&lora_callbacks, lora_param_init, true, CLASS_A, LORAWAN_REGION);
+    if (err != 0)
+    {
+        Serial.printf("lmh_init failed - %u\n", err);
+        return;
+    }
+
+    // Timer
+    appTimer.timerNum = 3;
+    TimerInit(&appTimer, tx_lora_periodic_handler);
+
+    Serial.println("Joining LoRaWAN...");
+    lmh_join();
+}
+
+void loop()
+{
+    // LoRaWAN stack is timer-driven; nothing to do here.
+    // Keep loop light to reduce power.
+}

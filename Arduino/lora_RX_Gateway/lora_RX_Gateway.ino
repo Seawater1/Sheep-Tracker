@@ -25,14 +25,14 @@
 #define LORAWAN_RX_PORT 2
 #define JOINREQ_NBTRIALS 3
 
-// Default send interval: once a day
-static uint32_t g_send_interval_sec = 24UL * 60UL * 60UL;
+// Default send interval: 60 seconds (for testing)
+static uint32_t g_send_interval_sec = 60UL;
 
-// OTAA keys (fill with your TTN values)
-static uint8_t nodeDeviceEUI[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-static uint8_t nodeAppEUI[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-static uint8_t nodeAppKey[16] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+// OTAA keys — rak11300-tracker-1 on TTN eu1
+static uint8_t nodeDeviceEUI[8] = {0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x07, 0x6C, 0x9F};
+static uint8_t nodeAppEUI[8]    = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static uint8_t nodeAppKey[16]   = {0x2F, 0x26, 0xF1, 0x34, 0xA7, 0x4C, 0xBD, 0x4C,
+                                   0xE7, 0x10, 0xB7, 0x8E, 0xE3, 0xAC, 0xF2, 0x30};
 
 static uint8_t m_lora_app_data_buffer[64];
 static lmh_app_data_t m_lora_app_data = {m_lora_app_data_buffer, 0, 0, 0, 0};
@@ -70,6 +70,16 @@ static TimerEvent_t appTimer;
 // ===== GNSS =====
 SFE_UBLOX_GNSS g_gnss;
 
+struct __attribute__((packed)) payload_t
+{
+    uint16_t batt_mv;
+    uint16_t solar_mv;
+    int32_t lat_e7;
+    int32_t lon_e7;
+    int16_t alt_m;
+    uint32_t gps_unix;
+};
+
 static uint16_t read_mv(uint8_t pin, float mv_per_lsb)
 {
     unsigned int sum = 0;
@@ -88,16 +98,6 @@ static uint16_t read_mv(uint8_t pin, float mv_per_lsb)
     unsigned int avg = (sum - adc_max - adc_min) >> 3;
     return (uint16_t)(avg * mv_per_lsb);
 }
-
-struct __attribute__((packed)) payload_t
-{
-    uint16_t batt_mv;
-    uint16_t solar_mv;
-    int32_t lat_e7;
-    int32_t lon_e7;
-    int16_t alt_m;
-    uint32_t gps_unix;
-};
 
 static void build_payload(payload_t &p)
 {

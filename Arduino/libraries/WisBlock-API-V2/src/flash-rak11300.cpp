@@ -8,7 +8,7 @@
  * @copyright Copyright (c) 2021
  *
  */
-#ifdef ARDUINO_RAKWIRELESS_RAK11300
+#if defined ARDUINO_ARCH_RP2040 && __has_include(<LittleFS.h>)
 
 #include "WisBlock-API-V2.h"
 

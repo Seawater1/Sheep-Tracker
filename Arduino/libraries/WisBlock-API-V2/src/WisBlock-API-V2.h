@@ -8,7 +8,11 @@
  * @copyright Copyright (c) 2023
  *
  */
+#if __has_include(<variant.h>)
 #include <variant.h>
+#elif __has_include(<pins_arduino.h>)
+#include <pins_arduino.h>
+#endif
 #ifndef WISBLOCK_API_H
 #define WISBLOCK_API_H
 

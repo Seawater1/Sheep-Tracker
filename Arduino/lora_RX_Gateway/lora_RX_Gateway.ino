@@ -7,6 +7,7 @@
 // ===== Hardware =====
 // RAK19007 (base), RAK11310 (core), RAK12500 (GNSS)
 // Adjust analog pins if your base board wiring differs
+#define PIN_GNSS_PWR WB_IO2
 #define PIN_VBAT WB_A0
 #define PIN_SOLAR WB_A1
 
@@ -25,8 +26,18 @@
 #define LORAWAN_RX_PORT 2
 #define JOINREQ_NBTRIALS 3
 
-// Default send interval: 60 seconds (for testing)
-static uint32_t g_send_interval_sec = 60UL;
+// Keep 60 seconds while validating end-to-end behaviour.
+// Raise this to 24 hours for field deployment once the tracker is proven.
+#define DEFAULT_SEND_INTERVAL_SEC 60UL
+
+// GNSS is one of the biggest power draws on the tracker, so only power it
+// when building an uplink and keep the search window bounded.
+#define GNSS_POWER_SETTLE_MS 1500UL
+#define GNSS_FIX_TIMEOUT_MS 30000UL
+#define GNSS_POLL_MS 250UL
+#define GPS_FIX_SIV_MIN 4U
+
+static uint32_t g_send_interval_sec = DEFAULT_SEND_INTERVAL_SEC;
 
 // OTAA keys — rak11300-tracker-1 on TTN eu1
 static uint8_t nodeDeviceEUI[8] = {0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x07, 0x6C, 0x9F};
@@ -69,6 +80,7 @@ static TimerEvent_t appTimer;
 
 // ===== GNSS =====
 SFE_UBLOX_GNSS g_gnss;
+static bool g_gnss_available = false;
 
 struct __attribute__((packed)) payload_t
 {
@@ -99,27 +111,67 @@ static uint16_t read_mv(uint8_t pin, float mv_per_lsb)
     return (uint16_t)(avg * mv_per_lsb);
 }
 
+static void gnss_power(bool on)
+{
+    pinMode(PIN_GNSS_PWR, OUTPUT);
+    digitalWrite(PIN_GNSS_PWR, on ? HIGH : LOW);
+}
+
+static bool capture_gnss_fix(payload_t &p)
+{
+    if (!g_gnss_available)
+    {
+        return false;
+    }
+
+    gnss_power(true);
+    delay(GNSS_POWER_SETTLE_MS);
+
+    if (!g_gnss.begin())
+    {
+        Serial.println("GNSS not found during capture");
+        gnss_power(false);
+        g_gnss_available = false;
+        return false;
+    }
+
+    g_gnss.setI2COutput(COM_TYPE_UBX);
+    g_gnss.setAutoPVT(true);
+    g_gnss.setNavigationFrequency(1);
+
+    const uint32_t start = millis();
+    while ((millis() - start) < GNSS_FIX_TIMEOUT_MS)
+    {
+        if (g_gnss.getPVT() && g_gnss.getSIV() >= GPS_FIX_SIV_MIN)
+        {
+            p.lat_e7 = g_gnss.getLatitude();
+            p.lon_e7 = g_gnss.getLongitude();
+            p.alt_m = (int16_t)(g_gnss.getAltitude() / 1000);
+            p.gps_unix = g_gnss.getUnixEpoch();
+            gnss_power(false);
+            return true;
+        }
+
+        delay(GNSS_POLL_MS);
+    }
+
+    gnss_power(false);
+    return false;
+}
+
 static void build_payload(payload_t &p)
 {
     p.batt_mv = read_mv(PIN_VBAT, REAL_VBAT_MV_PER_LSB);
     p.solar_mv = read_mv(PIN_SOLAR, REAL_VSOLAR_MV_PER_LSB);
+    p.lat_e7 = 0;
+    p.lon_e7 = 0;
+    p.alt_m = 0;
+    p.gps_unix = 0;
 
-    bool got_pvt = g_gnss.getPVT();
-    uint8_t siv = g_gnss.getSIV();
-
-    if (!got_pvt || siv < 4)
+    if (!capture_gnss_fix(p))
     {
-        p.lat_e7 = 0;
-        p.lon_e7 = 0;
-        p.alt_m = 0;
-        p.gps_unix = 0;
-        return;
+        Serial.println("GNSS fix unavailable for this uplink");
     }
-
-    p.lat_e7 = g_gnss.getLatitude();
-    p.lon_e7 = g_gnss.getLongitude();
-    p.alt_m = (int16_t)(g_gnss.getAltitude() / 1000);
-    p.gps_unix = g_gnss.getUnixEpoch();
 }
 
 static void send_lora_frame(void)
@@ -225,17 +277,24 @@ void setup()
 
     analogReadResolution(12);
 
+    gnss_power(false);
     Wire.begin();
+    gnss_power(true);
+    delay(GNSS_POWER_SETTLE_MS);
     if (g_gnss.begin())
     {
         g_gnss.setI2COutput(COM_TYPE_UBX);
         g_gnss.setAutoPVT(true);
+        g_gnss.setNavigationFrequency(1);
+        g_gnss_available = true;
         Serial.println("GNSS OK");
     }
     else
     {
+        g_gnss_available = false;
         Serial.println("GNSS not found (will still send voltages)");
     }
+    gnss_power(false);
 
     if (lora_rak11300_init() != 0)
     {

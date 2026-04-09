@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sheep Tracker Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  >
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Dog And Sheep Test Dashboard</p>
+        <h1>Live LoRaWAN map for your tracker collars.</h1>
+        <p class="hero-copy">
+          TTN receives the uplink, decodes the payload, and this dashboard turns it
+          into a map pin, a latest reading, and a simple movement history.
+        </p>
+      </div>
+      <div class="hero-card">
+        <div class="hero-stat">
+          <span>Mode</span>
+          <strong>TTN Test Feed</strong>
+        </div>
+        <div class="hero-stat">
+          <span>Map Source</span>
+          <strong>Decoded GPS payload</strong>
+        </div>
+        <div class="hero-stat">
+          <span>Best for now</span>
+          <strong>Dog field testing</strong>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="map-panel">
+        <div class="section-head">
+          <div>
+            <p class="section-label">Tracker Map</p>
+            <h2>Latest location and path</h2>
+          </div>
+          <div id="tracker-status" class="status-pill">Waiting For Data</div>
+        </div>
+        <div id="map" class="map-frame" aria-label="Tracker map"></div>
+      </section>
+
+      <aside class="side-panel">
+        <section class="panel-card">
+          <p class="section-label">Latest Animal</p>
+          <h3 id="animal-name">No tracker loaded</h3>
+          <dl class="facts">
+            <div>
+              <dt>Device</dt>
+              <dd id="device-id">-</dd>
+            </div>
+            <div>
+              <dt>Battery</dt>
+              <dd id="battery">-</dd>
+            </div>
+            <div>
+              <dt>Solar</dt>
+              <dd id="solar">-</dd>
+            </div>
+            <div>
+              <dt>Altitude</dt>
+              <dd id="altitude">-</dd>
+            </div>
+            <div>
+              <dt>Updated</dt>
+              <dd id="updated">-</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="panel-card">
+          <p class="section-label">TTN Input</p>
+          <h3>Paste a TTN webhook event</h3>
+          <p class="panel-copy">
+            This dashboard expects TTN JSON with <code>uplink_message.decoded_payload</code>.
+            If the live server is running, it will also poll the latest dog position automatically.
+          </p>
+          <textarea id="ttn-input" spellcheck="false" placeholder="Paste TTN webhook JSON here"></textarea>
+          <div class="button-row">
+            <button id="load-sample" type="button">Load Sample Event</button>
+            <button id="apply-json" type="button">Show On Map</button>
+          </div>
+          <p id="input-message" class="input-message">Ready for a TTN uplink event.</p>
+        </section>
+
+        <section class="panel-card">
+          <p class="section-label">How It Works</p>
+          <ol class="steps">
+            <li>Tracker sends GPS and battery data to TTN over LoRaWAN.</li>
+            <li>TTN uplink formatter turns the binary payload into fields.</li>
+            <li>TTN webhook posts each uplink to the Sheep Tracker server.</li>
+            <li>The dashboard polls that server and shows your dog or sheep on the map.</li>
+          </ol>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="./sample-event.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

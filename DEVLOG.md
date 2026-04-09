@@ -26,7 +26,7 @@
 
 **Hardware:** RAK19007 base + RAK11310 core + RAK12500 GNSS (u-blox)
 
-**Payload (packed struct, little-endian, 16 bytes):**
+**Payload (packed struct, little-endian, 18 bytes):**
 
 | Bytes | Field | Type | Notes |
 |---|---|---|---|

@@ -5,7 +5,7 @@ This is a simple dashboard for testing the tracker flow with TTN.
 ## What it does
 
 - shows the latest animal position on a map
-- shows battery, solar, altitude, and update time
+- shows battery, altitude, and update time
 - accepts pasted TTN webhook JSON
 - polls the local Sheep Tracker API for live updates
 - uses `uplink_message.decoded_payload` from TTN
@@ -56,7 +56,6 @@ The dashboard expects fields like:
   "uplink_message": {
     "decoded_payload": {
       "batt_mv": 4429,
-      "solar_mv": 1157,
       "lat_e7": 515542345,
       "lon_e7": -97762345,
       "alt_m": 48,

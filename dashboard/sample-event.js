@@ -8,7 +8,6 @@ window.sampleTtnEvent = {
     f_port: 1,
     decoded_payload: {
       batt_mv: 4429,
-      solar_mv: 1157,
       lat_e7: 515542345,
       lon_e7: -97762345,
       alt_m: 48,

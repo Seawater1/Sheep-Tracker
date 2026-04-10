@@ -40,7 +40,6 @@ def init_db() -> None:
             received_at TEXT NOT NULL,
             gps_unix INTEGER,
             batt_mv INTEGER,
-            solar_mv INTEGER,
             lat_e7 INTEGER,
             lon_e7 INTEGER,
             alt_m INTEGER,
@@ -77,7 +76,6 @@ def position_from_event(event: dict[str, Any]) -> dict[str, Any]:
         "received_at": event.get("received_at", utc_now()),
         "gps_unix": payload.get("gps_unix"),
         "batt_mv": payload.get("batt_mv"),
-        "solar_mv": payload.get("solar_mv"),
         "lat_e7": lat_e7,
         "lon_e7": lon_e7,
         "alt_m": payload.get("alt_m"),
@@ -92,9 +90,9 @@ def store_event(event: dict[str, Any]) -> dict[str, Any]:
     conn.execute(
         """
         INSERT INTO tracker_positions (
-            device_id, dev_eui, received_at, gps_unix, batt_mv, solar_mv,
+            device_id, dev_eui, received_at, gps_unix, batt_mv,
             lat_e7, lon_e7, alt_m, raw_event_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             position["device_id"],
@@ -102,7 +100,6 @@ def store_event(event: dict[str, Any]) -> dict[str, Any]:
             position["received_at"],
             position["gps_unix"],
             position["batt_mv"],
-            position["solar_mv"],
             position["lat_e7"],
             position["lon_e7"],
             position["alt_m"],
@@ -124,7 +121,6 @@ def row_to_point(row: sqlite3.Row) -> dict[str, Any]:
         "receivedAt": row["received_at"],
         "gpsUnix": row["gps_unix"],
         "battMv": row["batt_mv"],
-        "solarMv": row["solar_mv"],
         "altitude": row["alt_m"],
         "lat_e7": lat_e7,
         "lon_e7": lon_e7,

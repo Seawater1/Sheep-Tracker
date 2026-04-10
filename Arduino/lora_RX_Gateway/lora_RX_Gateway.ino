@@ -9,16 +9,11 @@
 // Adjust analog pins if your base board wiring differs
 #define PIN_GNSS_PWR WB_IO2
 #define PIN_VBAT WB_A0
-#define PIN_SOLAR WB_A1
 
-// Battery/solar divider calibration (adjust to your hardware)
+// Battery divider calibration (adjust to your hardware)
 #define VBAT_MV_PER_LSB 0.806F
 #define VBAT_DIVIDER_COMP 1.846F
 #define REAL_VBAT_MV_PER_LSB (VBAT_DIVIDER_COMP * VBAT_MV_PER_LSB)
-
-#define VSOLAR_MV_PER_LSB 0.806F
-#define VSOLAR_DIVIDER_COMP 1.846F
-#define REAL_VSOLAR_MV_PER_LSB (VSOLAR_DIVIDER_COMP * VSOLAR_MV_PER_LSB)
 
 // ===== LoRaWAN =====
 #define LORAWAN_REGION LORAMAC_REGION_EU868
@@ -33,9 +28,15 @@
 // GNSS is one of the biggest power draws on the tracker, so only power it
 // when building an uplink and keep the search window bounded.
 #define GNSS_POWER_SETTLE_MS 1500UL
-#define GNSS_FIX_TIMEOUT_MS 30000UL
+#define GNSS_FIX_TIMEOUT_MS 45000UL
 #define GNSS_POLL_MS 250UL
 #define GPS_FIX_SIV_MIN 4U
+#define GNSS_PROGRESS_LOG_MS 5000UL
+
+// Test mode: keep the tracker focused on acquiring and sending real GPS fixes.
+// After each successful GPS uplink, reset the acquisition state and start over
+// automatically on the next interval so outdoor testing can run unattended.
+#define GPS_TEST_MODE 1
 
 static uint32_t g_send_interval_sec = DEFAULT_SEND_INTERVAL_SEC;
 
@@ -81,11 +82,17 @@ static TimerEvent_t appTimer;
 // ===== GNSS =====
 SFE_UBLOX_GNSS g_gnss;
 static bool g_gnss_available = false;
+static bool g_gnss_powered = false;
+static bool g_have_seen_fix = false;
+static uint32_t g_boot_ms = 0;
+static uint32_t g_fix_attempts = 0;
+static uint32_t g_fix_successes = 0;
+static uint32_t g_send_attempts = 0;
+static uint32_t g_send_with_fix = 0;
 
 struct __attribute__((packed)) payload_t
 {
     uint16_t batt_mv;
-    uint16_t solar_mv;
     int32_t lat_e7;
     int32_t lon_e7;
     int16_t alt_m;
@@ -115,67 +122,136 @@ static void gnss_power(bool on)
 {
     pinMode(PIN_GNSS_PWR, OUTPUT);
     digitalWrite(PIN_GNSS_PWR, on ? HIGH : LOW);
+    g_gnss_powered = on;
 }
 
-static bool capture_gnss_fix(payload_t &p)
+static uint16_t read_vbat_mv(void)
 {
-    if (!g_gnss_available)
-    {
-        return false;
-    }
+    return read_mv(PIN_VBAT, REAL_VBAT_MV_PER_LSB);
+}
 
-    gnss_power(true);
-    delay(GNSS_POWER_SETTLE_MS);
+static void log_status(const char *label)
+{
+    Serial.printf("[%8lu ms] %s | joined=%u gnss_on=%u seen_fix=%u attempts=%lu success=%lu sends=%lu gps_sends=%lu\n",
+                  (unsigned long)(millis() - g_boot_ms),
+                  label,
+                  g_joined ? 1 : 0,
+                  g_gnss_powered ? 1 : 0,
+                  g_have_seen_fix ? 1 : 0,
+                  (unsigned long)g_fix_attempts,
+                  (unsigned long)g_fix_successes,
+                  (unsigned long)g_send_attempts,
+                  (unsigned long)g_send_with_fix);
+}
+
+static bool ensure_gnss_ready(void)
+{
+    if (!g_gnss_powered)
+    {
+        Serial.println("GNSS power ON");
+        gnss_power(true);
+        delay(GNSS_POWER_SETTLE_MS);
+    }
 
     if (!g_gnss.begin())
     {
         Serial.println("GNSS not found during capture");
-        gnss_power(false);
         g_gnss_available = false;
         return false;
     }
 
+    g_gnss_available = true;
     g_gnss.setI2COutput(COM_TYPE_UBX);
     g_gnss.setAutoPVT(true);
     g_gnss.setNavigationFrequency(1);
+    return true;
+}
 
+static bool capture_gnss_fix(payload_t &p)
+{
+    if (!g_gnss_available && !g_gnss_powered)
+    {
+        Serial.println("GNSS was unavailable and off, powering back on");
+        gnss_power(true);
+        delay(GNSS_POWER_SETTLE_MS);
+    }
+
+    if (!ensure_gnss_ready())
+    {
+        return false;
+    }
+
+    g_fix_attempts++;
     const uint32_t start = millis();
+    uint32_t last_progress_log = start;
+    uint8_t best_siv = 0;
+    log_status("Starting GNSS fix attempt");
+
     while ((millis() - start) < GNSS_FIX_TIMEOUT_MS)
     {
-        if (g_gnss.getPVT() && g_gnss.getSIV() >= GPS_FIX_SIV_MIN)
+        const bool got_pvt = g_gnss.getPVT();
+        const uint8_t siv = g_gnss.getSIV();
+        if (siv > best_siv)
         {
-            p.lat_e7 = g_gnss.getLatitude();
-            p.lon_e7 = g_gnss.getLongitude();
-            p.alt_m = (int16_t)(g_gnss.getAltitude() / 1000);
-            p.gps_unix = g_gnss.getUnixEpoch();
-            gnss_power(false);
-            return true;
+            best_siv = siv;
+        }
+
+        if (got_pvt)
+        {
+            Serial.printf("GNSS PVT SIV=%u lat=%ld lon=%ld alt=%ld\n",
+                          siv,
+                          g_gnss.getLatitude(),
+                          g_gnss.getLongitude(),
+                          g_gnss.getAltitude());
+            if (siv >= GPS_FIX_SIV_MIN)
+            {
+                p.lat_e7 = g_gnss.getLatitude();
+                p.lon_e7 = g_gnss.getLongitude();
+                p.alt_m = (int16_t)(g_gnss.getAltitude() / 1000);
+                p.gps_unix = g_gnss.getUnixEpoch();
+                g_have_seen_fix = true;
+                g_fix_successes++;
+                Serial.printf("GNSS FIX OK after %lu ms (SIV=%u)\n",
+                              (unsigned long)(millis() - start),
+                              siv);
+                return true;
+            }
+        }
+
+        if ((millis() - last_progress_log) >= GNSS_PROGRESS_LOG_MS)
+        {
+            Serial.printf("Waiting for GNSS fix... elapsed=%lu ms best_siv=%u current_siv=%u got_pvt=%u\n",
+                          (unsigned long)(millis() - start),
+                          best_siv,
+                          siv,
+                          got_pvt ? 1 : 0);
+            last_progress_log = millis();
         }
 
         delay(GNSS_POLL_MS);
     }
 
-    gnss_power(false);
+    Serial.printf("GNSS fix unavailable for this uplink after %lu ms (best_siv=%u)\n",
+                  (unsigned long)(millis() - start),
+                  best_siv);
     return false;
 }
 
 static void build_payload(payload_t &p)
 {
-    p.batt_mv = read_mv(PIN_VBAT, REAL_VBAT_MV_PER_LSB);
-    p.solar_mv = read_mv(PIN_SOLAR, REAL_VSOLAR_MV_PER_LSB);
+    p.batt_mv = read_vbat_mv();
     p.lat_e7 = 0;
     p.lon_e7 = 0;
     p.alt_m = 0;
     p.gps_unix = 0;
 
-    if (!capture_gnss_fix(p))
-    {
-        Serial.println("GNSS fix unavailable for this uplink");
-    }
+    capture_gnss_fix(p);
 }
 
 static void send_lora_frame(void)
 {
+    g_send_attempts++;
+
     if (!g_joined)
     {
         Serial.println("Not joined yet, skip send");
@@ -190,14 +266,48 @@ static void send_lora_frame(void)
     m_lora_app_data.buffsize = sizeof(payload);
 
     lmh_error_status err = lmh_send(&m_lora_app_data, LMH_UNCONFIRMED_MSG);
-    Serial.printf("lmh_send=%d, batt=%u, solar=%u\n", err, payload.batt_mv, payload.solar_mv);
+    const bool this_send_has_fix = payload.lat_e7 != 0 || payload.lon_e7 != 0;
+    if (this_send_has_fix)
+    {
+        g_send_with_fix++;
+    }
+    Serial.printf("lmh_send=%d, batt=%u, lat=%ld, lon=%ld, gps=%lu, gnss_on=%u, fixed=%u\n",
+                  err,
+                  payload.batt_mv,
+                  payload.lat_e7,
+                  payload.lon_e7,
+                  (unsigned long)payload.gps_unix,
+                  g_gnss_powered ? 1 : 0,
+                  g_have_seen_fix ? 1 : 0);
+
+#if GPS_TEST_MODE
+    if (err == LMH_SUCCESS && this_send_has_fix)
+    {
+        log_status("GPS TEST COMPLETE: real fix sent");
+        Serial.println("Restarting acquisition cycle for the next outdoor trial");
+        if (g_gnss_powered)
+        {
+            Serial.println("GNSS power OFF to force a fresh start next cycle");
+            gnss_power(false);
+        }
+        g_gnss_available = false;
+        g_have_seen_fix = false;
+        return;
+    }
+#endif
+
+    if (g_have_seen_fix && g_gnss_powered)
+    {
+        Serial.println("GNSS power OFF after successful GPS send");
+        gnss_power(false);
+    }
 }
 
 static void tx_lora_periodic_handler(void)
 {
+    send_lora_frame();
     TimerSetValue(&appTimer, g_send_interval_sec * 1000UL);
     TimerStart(&appTimer);
-    send_lora_frame();
 }
 
 static void lorawan_has_joined_handler(void)
@@ -274,19 +384,22 @@ void setup()
 {
     Serial.begin(115200);
     delay(2000);
+    g_boot_ms = millis();
+
+    Serial.println();
+    Serial.println("Sheep Tracker GPS test build");
+    Serial.printf("Payload bytes=%u, interval=%lu sec, fix timeout=%lu ms\n",
+                  (unsigned)sizeof(payload_t),
+                  (unsigned long)g_send_interval_sec,
+                  (unsigned long)GNSS_FIX_TIMEOUT_MS);
+    Serial.println("Behavior: keep GNSS awake until a real GPS uplink succeeds, then restart the acquisition cycle automatically");
 
     analogReadResolution(12);
 
     gnss_power(false);
     Wire.begin();
-    gnss_power(true);
-    delay(GNSS_POWER_SETTLE_MS);
-    if (g_gnss.begin())
+    if (ensure_gnss_ready())
     {
-        g_gnss.setI2COutput(COM_TYPE_UBX);
-        g_gnss.setAutoPVT(true);
-        g_gnss.setNavigationFrequency(1);
-        g_gnss_available = true;
         Serial.println("GNSS OK");
     }
     else
@@ -294,7 +407,9 @@ void setup()
         g_gnss_available = false;
         Serial.println("GNSS not found (will still send voltages)");
     }
-    gnss_power(false);
+    // Keep GNSS powered between uplinks until we get a first fix. Repeatedly
+    // cold-starting every 60 seconds can prevent lock entirely during testing.
+    log_status("Post-GNSS init");
 
     if (lora_rak11300_init() != 0)
     {

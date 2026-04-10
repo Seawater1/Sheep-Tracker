@@ -26,16 +26,15 @@
 
 **Hardware:** RAK19007 base + RAK11310 core + RAK12500 GNSS (u-blox)
 
-**Payload (packed struct, little-endian, 18 bytes):**
+**Payload (packed struct, little-endian, 16 bytes):**
 
 | Bytes | Field | Type | Notes |
 |---|---|---|---|
 | 0–1 | `batt_mv` | uint16 | Battery mV |
-| 2–3 | `solar_mv` | uint16 | Solar panel mV |
-| 4–7 | `lat_e7` | int32 | Latitude × 1e7 (0 if no fix) |
-| 8–11 | `lon_e7` | int32 | Longitude × 1e7 (0 if no fix) |
-| 12–13 | `alt_m` | int16 | Altitude in metres |
-| 14–17 | `gps_unix` | uint32 | Unix timestamp from GPS |
+| 2–5 | `lat_e7` | int32 | Latitude × 1e7 (0 if no fix) |
+| 6–9 | `lon_e7` | int32 | Longitude × 1e7 (0 if no fix) |
+| 10–11 | `alt_m` | int16 | Altitude in metres |
+| 12–15 | `gps_unix` | uint32 | Unix timestamp from GPS |
 
 **Downlink (port 2) — adjust send interval:**
 - 2 bytes: interval in minutes (uint16, little-endian)
@@ -48,13 +47,13 @@ Default send interval: 60 seconds (for testing). Increase to 5–15 min in produ
 ### First readings (serial monitor, indoors)
 
 ```
-lmh_send=0, batt=4581, solar=1167
+lmh_send=0, batt=4581
 Uplink sent (unconfirmed)
-lmh_send=0, batt=4429, solar=1157
+lmh_send=0, batt=4429
 ```
 
 - `lmh_send=0` = success
-- Battery ~4.58 V, solar ~1.17 V
+- Battery ~4.58 V
 - GPS zeros expected indoors — needs outdoor test for fix
 
 ### Toolchain notes

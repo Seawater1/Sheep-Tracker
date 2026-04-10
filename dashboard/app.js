@@ -50,7 +50,6 @@ function pointFromEvent(event) {
     devEui: event?.end_device_ids?.dev_eui ?? "-",
     animalName: event?.end_device_ids?.device_id ?? "unnamed tracker",
     battMv: payload.batt_mv ?? null,
-    solarMv: payload.solar_mv ?? null,
     altitude: payload.alt_m ?? null,
     gpsUnix: payload.gps_unix ?? null,
     receivedAt: event?.received_at ?? new Date().toISOString(),
@@ -63,7 +62,6 @@ function updateSummary(point) {
   document.getElementById("animal-name").textContent = point.animalName;
   document.getElementById("device-id").textContent = `${point.deviceId} / ${point.devEui}`;
   document.getElementById("battery").textContent = point.battMv ? `${point.battMv} mV` : "-";
-  document.getElementById("solar").textContent = point.solarMv ? `${point.solarMv} mV` : "-";
   document.getElementById("altitude").textContent = point.altitude !== null ? `${point.altitude} m` : "-";
   document.getElementById("updated").textContent = formatTimestamp(point.receivedAt);
 }
@@ -80,7 +78,6 @@ function updateMap(point) {
     <div class="tracker-popup">
       <strong>${point.animalName}</strong><br>
       Battery: ${point.battMv ?? "-"} mV<br>
-      Solar: ${point.solarMv ?? "-"} mV<br>
       Lat: ${formatLatLon(point.latitude * 1e7)}<br>
       Lon: ${formatLatLon(point.longitude * 1e7)}
     </div>

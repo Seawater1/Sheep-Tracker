@@ -24,30 +24,34 @@ function readInt32LE(bytes, index) {
 function decodeUplink(input) {
   const bytes = input.bytes;
 
-  if (bytes.length !== 18) {
+  // Support both the original 16-byte payload and the new 18-byte deep-sleep payload
+  if (bytes.length !== 16 && bytes.length !== 18) {
     return {
-      errors: ["Expected 18-byte payload"]
+      errors: ["Expected 16 or 18 byte payload, got " + bytes.length]
     };
   }
 
   const batt_mv = readUint16LE(bytes, 0);
-  const solar_mv = readUint16LE(bytes, 2);
-  const lat_e7 = readInt32LE(bytes, 4);
-  const lon_e7 = readInt32LE(bytes, 8);
-  const alt_m = readInt16LE(bytes, 12);
-  const gps_unix = readUint32LE(bytes, 14);
+  const lat_e7 = readInt32LE(bytes, 2);
+  const lon_e7 = readInt32LE(bytes, 6);
+  const alt_m = readInt16LE(bytes, 10);
+  const gps_unix = readUint32LE(bytes, 12);
+
+  // New field in 18-byte payload: time-to-first-fix in deciseconds
+  const ttff_ds = bytes.length >= 18 ? readUint16LE(bytes, 16) : null;
 
   return {
     data: {
       batt_mv,
-      solar_mv,
       lat_e7,
       lon_e7,
       alt_m,
       gps_unix,
       latitude: lat_e7 / 1e7,
       longitude: lon_e7 / 1e7,
-      has_fix: lat_e7 !== 0 || lon_e7 !== 0
+      has_fix: lat_e7 !== 0 || lon_e7 !== 0,
+      ttff_ds: ttff_ds,
+      ttff_sec: ttff_ds !== null ? ttff_ds / 10.0 : null
     }
   };
 }

@@ -8,13 +8,14 @@
  * @copyright Copyright (c) 2021
  *
  */
-#ifdef ARDUINO_RAKWIRELESS_RAK11300
+#if defined(ARDUINO_RAKWIRELESS_RAK11300) || defined(ARDUINO_ARCH_RP2040)
 
 #include "WisBlock-API-V2.h"
 
 s_lorawan_settings g_flash_content;
 s_loracompat_settings g_flash_content_compat;
 
+#if __has_include(<FS.h>) && __has_include(<LittleFS.h>)
 #include <FS.h>
 #include <LittleFS.h>
 
@@ -175,5 +176,24 @@ void flash_reset(void)
 		lora_file.close();
 	}
 }
+
+#else
+
+void init_flash(void)
+{
+	init_flash_done = true;
+}
+
+boolean save_settings(void)
+{
+	return true;
+}
+
+void flash_reset(void)
+{
+	init_flash_done = true;
+}
+
+#endif
 
 #endif

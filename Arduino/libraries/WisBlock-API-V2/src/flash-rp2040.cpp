@@ -8,7 +8,7 @@
  * @copyright Copyright (c) 2021
  *
  */
-#if defined ARDUINO_ARCH_RP2040 && not defined ARDUINO_RAKWIRELESS_RAK11300
+#if defined ARDUINO_ARCH_RP2040 && !defined(ARDUINO_RAKWIRELESS_RAK11300) && __has_include(<LittleFS_Mbed_RP2040.h>)
 
 #include "WisBlock-API-V2.h"
 
